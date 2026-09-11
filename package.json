@@ -1,0 +1,23 @@
+{
+  "name": "lazerfuse",
+  "version": "0.1.0",
+  "description": "Read-only FUSE view of osu!lazer storage in osu!stable layout",
+  "scripts": {
+    "start": "node lazerfuse.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@cocalc/fuse-native": "^2.4.3",
+    "realm": "^20.2.0"
+  },
+  "allowScripts": {
+    "realm@20.2.0": true,
+    "@cocalc/fuse-native@2.4.3": true
+  },
+  "bin": {
+    "lazerfuse": "./lazerfuse.js"
+  }
+}
