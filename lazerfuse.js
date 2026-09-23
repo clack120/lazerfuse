@@ -6,8 +6,8 @@
 //
 // Works while lazer is running: realm is opened in normal (multi-process) mode
 // and collection listeners keep the view current. File entries are exposed as
-// symlinks into the content-addressed files/ store by default (native I/O
-// speed); --passthrough serves regular files through FUSE instead.
+// regular read-only files through FUSE by default; --symlink opts into native
+// I/O through links to the content-addressed files/ store.
 
 const Fuse = require("@cocalc/fuse-native");
 const Realm = require("realm");
@@ -19,26 +19,36 @@ const os = require("os");
 
 function usage(code) {
   console.error(
-    "usage: lazerfuse [--osu-dir <dir>] [--passthrough] [--debug] <mountpoint>"
+    "usage: lazerfuse [--osu-dir <dir>] [--passthrough | --symlink] [--debug] <mountpoint>"
   );
   process.exit(code);
 }
 
 const argv = process.argv.slice(2);
 let osuDir = path.join(os.homedir(), ".local/share/osu");
-let passthrough = false;
+let passthrough = true;
+let sawPassthrough = false;
+let sawSymlink = false;
 let debug = false;
 let mountpoint = null;
 
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === "--osu-dir") osuDir = argv[++i] ?? usage(1);
-  else if (a === "--passthrough") passthrough = true;
+  else if (a === "--passthrough") {
+    sawPassthrough = true;
+    passthrough = true;
+  } else if (a === "--symlink") {
+    sawSymlink = true;
+    passthrough = false;
+  }
   else if (a === "--debug") debug = true;
   else if (a === "-h" || a === "--help") usage(0);
   else if (!mountpoint) mountpoint = a;
   else usage(1);
 }
+if (sawPassthrough && sawSymlink)
+  throw new Error("--passthrough and --symlink cannot be used together");
 if (!mountpoint) usage(1);
 mountpoint = path.resolve(mountpoint);
 
@@ -64,12 +74,14 @@ function makeDir(name, mtime) {
   return { name, mtime, children: new Map() };
 }
 
-function getOrMakeDir(parent, name, mtime) {
-  const key = name.toLowerCase();
-  let node = parent.children.get(key);
-  if (!node || !node.children) {
+function getOrMakeDir(parent, sourceName, mtime) {
+  parent.sourceDirs ??= new Map();
+  let node = parent.sourceDirs.get(sourceName);
+  if (!node) {
+    const name = uniqueName(parent, sanitize(sourceName));
     node = makeDir(name, mtime);
-    parent.children.set(key, node);
+    parent.children.set(name.toLowerCase(), node);
+    parent.sourceDirs.set(sourceName, node);
   }
   return node;
 }
@@ -90,12 +102,23 @@ function uniqueName(parent, base) {
   return name;
 }
 
+function uniqueFileName(parent, base) {
+  if (!parent.children.has(base.toLowerCase())) return base;
+  const ext = path.extname(base);
+  const stem = base.slice(0, base.length - ext.length);
+  let name;
+  for (let n = 2; ; n++) {
+    name = `${stem} (${n})${ext}`;
+    if (!parent.children.has(name.toLowerCase())) return name;
+  }
+}
+
 function addEntry(setDir, filename, hash, mtime) {
   const segments = filename.replace(/\\/g, "/").split("/").filter(Boolean);
   if (!segments.length) return;
   let dir = setDir;
-  for (const seg of segments.slice(0, -1)) dir = getOrMakeDir(dir, sanitize(seg), mtime);
-  const leaf = sanitize(segments[segments.length - 1]);
+  for (const seg of segments.slice(0, -1)) dir = getOrMakeDir(dir, seg, mtime);
+  const leaf = uniqueFileName(dir, sanitize(segments[segments.length - 1]));
   dir.children.set(leaf.toLowerCase(), { name: leaf, mtime, hash });
 }
 
