@@ -68,6 +68,10 @@ function blobPath(hash) {
   return path.join(filesDir, hash[0], hash.slice(0, 2), hash);
 }
 
+function fuseError(err) {
+  return Fuse[err.code] ?? Fuse.EIO;
+}
+
 // One node is {name, mtime, children: Map<lowercased, node>} for dirs
 // or {name, mtime, hash} for files.
 function makeDir(name, mtime) {
@@ -252,11 +256,7 @@ const sizeCache = new Map();
 function sizeOf(hash) {
   let s = sizeCache.get(hash);
   if (s === undefined) {
-    try {
-      s = fs.statSync(blobPath(hash)).size;
-    } catch {
-      s = 0;
-    }
+    s = fs.statSync(blobPath(hash)).size;
     sizeCache.set(hash, s);
   }
   return s;
@@ -272,7 +272,11 @@ const ops = {
   getattr(p, cb) {
     const node = resolve(p);
     if (!node) return cb(Fuse.ENOENT);
-    cb(0, statFor(node));
+    try {
+      cb(0, statFor(node));
+    } catch (err) {
+      cb(fuseError(err));
+    }
   },
   readlink(p, cb) {
     const node = resolve(p);
@@ -286,12 +290,12 @@ const ops = {
     if (node.children) return cb(Fuse.EISDIR);
     if ((flags & 3) !== 0) return cb(Fuse.EROFS); // O_WRONLY / O_RDWR
     fs.open(blobPath(node.hash), "r", (err, fd) =>
-      err ? cb(Fuse.ENOENT) : cb(0, fd)
+      err ? cb(fuseError(err)) : cb(0, fd)
     );
   },
   read(p, fd, buf, len, pos, cb) {
     fs.read(fd, buf, 0, len, pos, (err, bytesRead) =>
-      err ? cb(0) : cb(bytesRead)
+      err ? cb(fuseError(err)) : cb(bytesRead)
     );
   },
   release(p, fd, cb) {
